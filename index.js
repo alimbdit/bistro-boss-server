@@ -25,7 +25,7 @@ const verifyJWT = (req, res, next) => {
 
   // verify token
   jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
-    console.log(err, decoded);
+    // console.log(err, decoded);
     if (err) {
       return res
         .status(401)
@@ -62,7 +62,7 @@ async function run() {
 
     app.post("/jwt", (req, res) => {
       const user = req.body;
-      console.log(user);
+      // console.log(user);
       const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
         expiresIn: "1h",
       });
@@ -148,6 +148,21 @@ async function run() {
       const result = await menuCollection.find().toArray();
       res.send(result);
     });
+
+    app.post("/menu", verifyJWT, verifyAdmin, async (req, res) => {
+      const newItem = req.body;
+      const result = await menuCollection.insertOne(newItem);
+      res.send(result);
+    });
+
+    app.delete("/menu/:id", verifyJWT, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      console.log(id, query)
+      const result = await menuCollection.deleteOne(query);
+      res.send(result);
+    });
+
     app.get("/reviews", async (req, res) => {
       const result = await reviewCollection.find().toArray();
       res.send(result);
