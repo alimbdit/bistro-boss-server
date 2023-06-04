@@ -52,7 +52,7 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();
+    // await client.connect();
 
     const usersCollection = client.db("bistroDb").collection("users");
     const menuCollection = client.db("bistroDb").collection("menu");
@@ -160,7 +160,7 @@ async function run() {
     app.delete("/menu/:id", verifyJWT, verifyAdmin, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
-      console.log(id, query);
+      // console.log(id, query);
       const result = await menuCollection.deleteOne(query);
       res.send(result);
     });
@@ -205,7 +205,7 @@ async function run() {
     // payment intent
     app.post("/create-payment-intent", verifyJWT, async (req, res) => {
       const { price } = req.body;
-      const amount = price * 100;
+      const amount = parseInt(price * 100);
       const paymentIntent = await stripe.paymentIntents.create({
         amount: amount,
         currency: "usd",
@@ -218,14 +218,187 @@ async function run() {
     });
 
     // payment related api
-    app.post('/payments', verifyJWT, async(req, res) => {
+    app.post("/payments", verifyJWT, async (req, res) => {
       const payment = req.body;
       const insertResult = await paymentCollection.insertOne(payment);
 
-      const query = {_id: {$in: payment.cartItems.map(id => new ObjectId(id))}};
-      const deleteResult = await cartCollection.deleteMany(query)
-      res.send({insertResult, deleteResult})
-    })
+      const query = {
+        _id: { $in: payment.cartItems.map((id) => new ObjectId(id)) },
+      };
+      const deleteResult = await cartCollection.deleteMany(query);
+      res.send({ insertResult, deleteResult });
+    });
+
+    //  * admin dashboard data
+    app.get("/admin-stats", verifyJWT, verifyAdmin, async (req, res) => {
+      const users = await usersCollection.estimatedDocumentCount();
+      const products = await menuCollection.estimatedDocumentCount();
+      const orders = await paymentCollection.estimatedDocumentCount();
+
+      // best way to get sum of the price field is to use group and sum operator
+      /*
+        await paymentCollection.aggregate([
+          {
+            $group: {
+              _id: null,
+              total: { $sum: '$price' }
+            }
+          }
+        ]).toArray()
+      */
+
+      const payments = await paymentCollection.find().toArray();
+      const revenue = parseFloat(payments.reduce((sum, payment) => sum + payment.price, 0).toFixed(2));
+
+      res.send({ users, products, orders, revenue });
+    });
+
+    /**
+     * ---------------
+     * BANGLA SYSTEM(second best solution)
+     * ---------------
+     * 1. load all payments
+     * 2. for each payment, get the menuItems array
+     * 3. for each item in the menuItems array get the menuItem from the menu collection
+     * 4. put them in an array: allOrderedItems
+     * 5. separate allOrderedItems by category using filter
+     * 6. now get the quantity by using length: pizzas.length
+     * 7. for each category use reduce to get the total amount spent on this category
+     *
+     */
+
+    app.get("/order-stats", verifyJWT, verifyAdmin, async (req, res) => {
+      const allPayments = await paymentCollection.find().toArray();
+
+      const allOrderedItems = [];
+      let menuItemsIdArray = [];
+      allPayments.map((payment) => {
+        menuItemsIdArray.push(...payment.menuItems);
+      });
+      // const menuItemsObjectId = menuItemsIdArray.map((id) => new ObjectId(id));
+
+      // Retrieve the corresponding allOrderedItems for each menuItem
+      for (const id of menuItemsIdArray) {
+        const item = await menuCollection.findOne({
+          _id: new ObjectId(id),
+        });
+        if (item) {
+          allOrderedItems.push(item);
+        }
+      }
+
+      const pizzaItems =[];
+      const saladItems =[];
+      const dessertItems =[];
+      const popularItems =[];
+      const offeredItems =[];
+      const drinksItems =[];
+      const soupItems =[];
+      const desiItems =[];
+
+      allOrderedItems.map(item => {
+        if(item.category === "pizza"){
+          pizzaItems.push(item)
+        }
+        else if (item.category === "salad"){
+          saladItems.push(item)
+        }
+        else if (item.category === "dessert"){
+          dessertItems.push(item)
+        }
+        else if (item.category === "popular"){
+          popularItems.push(item)
+        }
+        else if (item.category === "offered"){
+          offeredItems.push(item)
+        }
+        else if (item.category === "drinks"){
+          drinksItems.push(item)
+        }
+        else if (item.category === "soup"){
+          soupItems.push(item)
+        }
+        else{
+          desiItems.push(item)
+        }
+      })
+      const orderSummary = [
+        {
+          category: "salad",
+          count: saladItems.length,
+          total: parseFloat(saladItems.reduce((sum, item) => sum + item.price, 0).toFixed(2))
+        },
+        {
+          category: "dessert",
+          count: dessertItems.length,
+          total: parseFloat(dessertItems.reduce((sum, item) => sum + item.price, 0).toFixed(2))
+        },
+        {
+          category: "popular",
+          count: popularItems.length,
+          total: parseFloat(popularItems.reduce((sum, item) => sum + item.price, 0).toFixed(2))
+        },
+        {
+          category: "offered",
+          count: offeredItems.length,
+          total: parseFloat(offeredItems.reduce((sum, item) => sum + item.price, 0).toFixed(2))
+        },
+        {
+          category: "drinks",
+          count: drinksItems.length,
+          total: parseFloat(drinksItems.reduce((sum, item) => sum + item.price, 0).toFixed(2))
+        },
+        {
+          category: "soup",
+          count: soupItems.length,
+          total: parseFloat(soupItems.reduce((sum, item) => sum + item.price, 0).toFixed(2))
+        },
+        {
+          category: "desi",
+          count: desiItems.length,
+          total: parseFloat(desiItems.reduce((sum, item) => sum + item.price, 0).toFixed(2))
+        },
+      
+      ]
+
+      res.send(orderSummary)
+    });
+
+   
+
+    // app.get("/order-stats", async (req, res) => {
+    //   const pipeline = [
+    //     {
+    //       $lookup: {
+    //         from: "menuCollection",
+    //         localField: "menuItems",
+    //         foreignField: "_id",
+    //         as: "menuItemsData",
+    //       },
+    //     },
+    //     {
+    //       $unwind: "$menuItemsData",
+    //     },
+    //     {
+    //       $group: {
+    //         _id: "$menuItemsData.category",
+    //         count: { $sum: 1 },
+    //         total: { $sum: "$menuItemsData.price" },
+    //       },
+    //     },
+    //     {
+    //       $project: {
+    //         category: "$_id",
+    //         count: 1,
+    //         total: { $round: ["$total", 2] },
+    //         _id: 0,
+    //       },
+    //     },
+    //   ];
+
+    //   const result = await paymentCollection.aggregate(pipeline).toArray();
+    //   res.send(result);
+    // });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
